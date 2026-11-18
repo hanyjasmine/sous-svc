@@ -135,3 +135,14 @@ def test_total_settles_on_loaded_count_when_provider_runs_out(make_client):
     assert len(res["recipes"]) == 2
     assert res["total"] == 32
     assert res["nextCursor"] is None
+
+
+def test_same_words_skip_parsing(make_client, monkeypatch):
+    provider = FakeProvider([[RECIPE]])
+    client = make_client(provider)
+    client.post("/search", json={"query": "Warm  Soup"})
+    calls = []
+    monkeypatch.setattr("sous_svc.routes.search.parse_query", lambda q, m: calls.append(q))
+    again = client.post("/search", json={"query": "warm soup"}).get_json()
+    assert calls == []
+    assert again["recipes"][0]["id"] == "spoonacular-1"

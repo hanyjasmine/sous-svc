@@ -69,6 +69,7 @@ def chat(session_id: str):
         provider=current_app.extensions["sous.spoonacular"],
         model=current_app.config["ANTHROPIC_MODEL"],
         allow_search=lambda: user_id is not None or search_limiter.allow(ip),
+        web=current_app.extensions["sous.web"],
     )
 
     def events():

@@ -19,6 +19,9 @@ class Pool:
         return self.offset < self.total
 
 
+WEB_JOB_TIMEOUT = 180
+
+
 @dataclass
 class SearchSession:
     id: str
@@ -28,6 +31,18 @@ class SearchSession:
     created_at: float = field(default_factory=time.time)
     # none means the whole pool is showing
     visible_ids: list[str] | None = None
+    # "pending" while web results are being fetched in the background
+    web_status: str | None = None
+    web_started: float | None = None
+
+    @property
+    def web_pending(self) -> bool:
+        # a job lost to a restart shouldn't keep the frontend polling forever
+        return (
+            self.web_status == "pending"
+            and self.web_started is not None
+            and time.time() - self.web_started < WEB_JOB_TIMEOUT
+        )
 
     @property
     def filters(self) -> SearchFilters:
@@ -62,6 +77,8 @@ class Store(Protocol):
     def replace_pool(self, session: SearchSession, pool: Pool) -> None: ...
 
     def set_visible(self, session: SearchSession, recipe_ids: list[str] | None) -> None: ...
+
+    def set_web_status(self, session_id: str, status: str) -> None: ...
 
     def get_cached_pool(self, key: str) -> Pool | None: ...
 

@@ -1,3 +1,4 @@
+import hashlib
 import logging
 from dataclasses import dataclass
 
@@ -18,14 +19,21 @@ PAGE_SIZE = 10
 @dataclass
 class PoolResult:
     pool: Pool
-    cache_key: str
+    # filter hash, plus the raw query hash when the search came from the search bar
+    cache_keys: list[str]
     fresh: bool
+
+
+# the same words skip parsing, claude can word filters differently each run
+def query_cache_key(query: str) -> str:
+    norm = " ".join(query.lower().split())
+    return "q:" + hashlib.sha256(norm.encode()).hexdigest()[:32]
 
 
 def find_pool(filters: SearchFilters, provider, store: Store) -> PoolResult:
     key = filters.cache_key()
     if cached := store.get_cached_pool(key):
-        return PoolResult(cached, key, fresh=False)
+        return PoolResult(cached, [key], fresh=False)
 
     page = provider.search(filters, number=POOL_SIZE)
     # soft filters can zero things out, retry once without them
@@ -33,13 +41,14 @@ def find_pool(filters: SearchFilters, provider, store: Store) -> PoolResult:
         filters = filters.relaxed()
         page = provider.search(filters, number=POOL_SIZE)
     pool = Pool(filters, _dedupe(page.recipes), offset=POOL_SIZE, total=page.total)
-    return PoolResult(pool, key, fresh=True)
+    return PoolResult(pool, [key], fresh=True)
 
 
 # call after the pool is persisted so the cache can point at stored recipes
 def cache_pool(store: Store, result: PoolResult) -> None:
     if result.fresh and result.pool.recipes:
-        store.put_cached_pool(result.cache_key, result.pool)
+        for key in result.cache_keys:
+            store.put_cached_pool(key, result.pool)
 
 
 # how many recipes scrolling can reach, known from the first page so counts stay put
@@ -86,6 +95,7 @@ def page(
         "total": len(view) if session.narrowed else reachable(session.pool),
         "poolSize": reachable(session.pool),
         "narrowed": session.narrowed,
+        "webPending": session.web_pending,
     }
 
 

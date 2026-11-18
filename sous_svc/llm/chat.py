@@ -8,9 +8,10 @@ from dataclasses import dataclass
 import anthropic
 from pydantic import ValidationError
 
-from ..pool import cache_pool, find_pool, page, reachable
+from ..pool import PoolResult, cache_pool, find_pool, page, reachable
 from ..recipes import ProviderError, QuotaExceeded, SearchFilters
-from ..store import SearchSession, Store
+from ..store import Pool, SearchSession, Store
+from ..web import WebTopup
 from .client import get_client
 from .prompts import CHAT_SYSTEM
 
@@ -79,9 +80,13 @@ class ChatContext:
     model: str
     # false once a guest has used up their searches
     allow_search: Callable[[], bool]
+    web: WebTopup | None = None
+    # what the user asked this turn, gives a web search more to go on than filters
+    user_text: str = ""
 
 
 def run_turn(ctx: ChatContext, history: list[dict], user_text: str) -> Iterator[Event]:
+    ctx.user_text = user_text
     new: list[dict] = [{"role": "user", "content": [{"type": "text", "text": user_text}]}]
     pool_text = pool_message(ctx.session)
     # only resend the pool when it changed since the model last saw it
@@ -179,19 +184,28 @@ def run_tool(ctx: ChatContext, name: str, args, tool_use_id: str) -> tuple[dict,
         if not ctx.allow_search():
             msg = "guest search limit reached this hour, suggest signing in or trying later"
             return _result(tool_use_id, msg, True), None
+        web = ctx.web if ctx.web and ctx.web.enabled else None
         try:
             result = find_pool(filters, ctx.provider, ctx.store)
-        except QuotaExceeded:
-            msg = "the recipe API's daily quota is used up, it resets at midnight utc"
-            return _result(tool_use_id, msg, True), None
         except ProviderError as e:
-            log.error("chat search failed: %s", e)
-            return _result(tool_use_id, "recipe search is unavailable right now", True), None
-        if not result.pool.recipes:
+            if web is None:
+                if isinstance(e, QuotaExceeded):
+                    msg = "the recipe API's daily quota is used up, it resets at midnight utc"
+                else:
+                    log.error("chat search failed: %s", e)
+                    msg = "recipe search is unavailable right now"
+                return _result(tool_use_id, msg, True), None
+            # the web stands in for the recipe api
+            result = PoolResult(Pool(filters, []), [filters.cache_key()], fresh=True)
+        topup = web is not None and web.needed(result)
+        if not result.pool.recipes and not topup:
             return _result(tool_use_id, "no recipes found, the pool is unchanged"), None
         ctx.store.replace_pool(session, result.pool)
-        cache_pool(ctx.store, result)
         session.pool, session.visible_ids = result.pool, None
+        if topup:
+            web.start(session, result, ctx.user_text)
+        else:
+            cache_pool(ctx.store, result)
         return _result(tool_use_id, pool_message(session)), _update(ctx)
 
     return _result(tool_use_id, f"unknown tool {name}", True), None
@@ -221,6 +235,8 @@ def pool_message(session: SearchSession) -> str:
         if total > loaded
         else str(total)
     )
+    if session.web_pending:
+        count = f"{loaded} so far, more are still loading from the web"
     showing = ", ".join(session.visible_ids) if session.visible_ids is not None else "all"
     return (
         f"[pool {digest}]\n"

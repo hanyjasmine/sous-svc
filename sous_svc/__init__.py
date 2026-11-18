@@ -3,11 +3,12 @@ import logging
 from flask import Flask, jsonify
 from werkzeug.exceptions import HTTPException
 
-from .config import Config
+from .config import Config, features
 from .limits import RateLimiter
 from .recipes import SpoonacularClient
 from .routes import register_routes
 from .store import MemoryStore, SupabaseStore
+from .web import WebTopup
 
 
 def create_app(config: type[Config] | dict | None = None) -> Flask:
@@ -20,10 +21,19 @@ def create_app(config: type[Config] | dict | None = None) -> Flask:
 
     logging.basicConfig(level=logging.INFO)
 
-    app.extensions["sous.store"] = _make_store(app)
+    store = _make_store(app)
+    app.extensions["sous.store"] = store
     app.extensions["sous.spoonacular"] = SpoonacularClient(app.config["SPOONACULAR_API_KEY"])
     app.extensions["sous.guest_limiter"] = RateLimiter(app.config["GUEST_SEARCHES_PER_HOUR"])
     app.extensions["sous.guest_chat_limiter"] = RateLimiter(app.config["GUEST_CHAT_TURNS_PER_HOUR"])
+
+    app.extensions["sous.web"] = WebTopup(
+        store,
+        model=app.config["WEB_SEARCH_MODEL"],
+        # tests opt in explicitly so they never hit the network
+        enabled=features(app.config)["web_search_fallback"] and not app.config.get("TESTING"),
+        below=app.config["WEB_TOPUP_BELOW"],
+    )
 
     register_routes(app)
 

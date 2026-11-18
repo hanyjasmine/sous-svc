@@ -5,9 +5,18 @@ from flask import Blueprint, abort, current_app, jsonify, request
 from ..auth import current_user_id
 from ..limits import RateLimiter, client_ip
 from ..llm import parse_query
-from ..pool import PAGE_SIZE, cache_pool, find_pool, page, session_dict
+from ..pool import (
+    PAGE_SIZE,
+    PoolResult,
+    cache_pool,
+    find_pool,
+    page,
+    query_cache_key,
+    session_dict,
+)
 from ..recipes import ProviderError, QuotaExceeded
-from ..store import SearchSession, Store
+from ..store import Pool, SearchSession, Store
+from ..web import WebTopup
 
 log = logging.getLogger(__name__)
 
@@ -41,17 +50,31 @@ def create_search():
             error="rate_limited", message="Too many searches. Sign in or try again in a bit."
         ), 429
 
+    web: WebTopup = current_app.extensions["sous.web"]
+    query_key = query_cache_key(query)
+    if cached := _store().get_cached_pool(query_key):
+        session = _store().create_session(query, cached, user_id)
+        return jsonify(session_dict(session, _provider(), _store())), 201
+
     filters = parse_query(query, current_app.config["ANTHROPIC_MODEL"])
     try:
         result = find_pool(filters, _provider(), _store())
-    except QuotaExceeded as e:
-        return jsonify(error="quota_exceeded", message=str(e)), 429
     except ProviderError as e:
-        log.error("recipe search failed: %s", e)
-        return jsonify(error="provider_error", message="Recipe search is unavailable"), 502
+        # the web can stand in when spoonacular is down or out of quota
+        if not web.enabled:
+            if isinstance(e, QuotaExceeded):
+                return jsonify(error="quota_exceeded", message=str(e)), 429
+            log.error("recipe search failed: %s", e)
+            return jsonify(error="provider_error", message="Recipe search is unavailable"), 502
+        log.warning("recipe api failed, searching the web instead: %s", e)
+        result = PoolResult(Pool(filters, []), [filters.cache_key()], fresh=True)
 
     session = _store().create_session(query, result.pool, user_id)
-    cache_pool(_store(), result)
+    result.cache_keys.append(query_key)
+    if web.needed(result):
+        web.start(session, result, query)
+    else:
+        cache_pool(_store(), result)
     return jsonify(session_dict(session, _provider(), _store())), 201
 
 

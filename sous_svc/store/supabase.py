@@ -44,6 +44,7 @@ class SupabaseStore:
             self._db.table("search_sessions")
             .select(
                 "id, user_id, initial_query, filters, provider_offset, provider_total, "
+                "web_status, web_started_at, "
                 f"created_at, session_results(rank, visible, recipes({RECIPE_COLUMNS}))"
             )
             .eq("id", session_id)
@@ -76,6 +77,10 @@ class SupabaseStore:
             visible_ids=[rec.id for rec, r in zip(recipes, results, strict=True) if r["visible"]]
             if hidden
             else None,
+            web_status=row.get("web_status"),
+            web_started=datetime.fromisoformat(row["web_started_at"]).timestamp()
+            if row.get("web_started_at")
+            else None,
         )
 
     def extend_pool(
@@ -83,7 +88,14 @@ class SupabaseStore:
     ) -> None:
         recipes = _dedupe(recipes)
         db_ids = self._upsert_recipes(recipes)
-        self._insert_results(session.id, recipes, db_ids, start=len(session.pool.recipes))
+        self._insert_results(
+            session.id,
+            recipes,
+            db_ids,
+            start=len(session.pool.recipes),
+            # new arrivals stay hidden while the chat has the list narrowed
+            visible=not session.narrowed,
+        )
         self._db.table("search_sessions").update(
             {"provider_offset": offset, "provider_total": total}
         ).eq("id", session.id).execute()
@@ -110,6 +122,12 @@ class SupabaseStore:
             self._db.table("session_results").update({"visible": True}).eq(
                 "session_id", session.id
             ).in_("recipe_id", keep).execute()
+
+    def set_web_status(self, session_id: str, status: str) -> None:
+        update: dict = {"web_status": status}
+        if status == "pending":
+            update["web_started_at"] = datetime.now(UTC).isoformat()
+        self._db.table("search_sessions").update(update).eq("id", session_id).execute()
 
     def get_cached_pool(self, key: str) -> Pool | None:
         cutoff = datetime.now(UTC) - timedelta(seconds=self._ttl)
@@ -230,12 +248,22 @@ class SupabaseStore:
         return out
 
     def _insert_results(
-        self, session_id: str, recipes: list[Recipe], db_ids: dict[str, str], start: int
+        self,
+        session_id: str,
+        recipes: list[Recipe],
+        db_ids: dict[str, str],
+        start: int,
+        visible: bool = True,
     ) -> None:
         if recipes:
             self._db.table("session_results").insert(
                 [
-                    {"session_id": session_id, "recipe_id": db_ids[r.id], "rank": start + i}
+                    {
+                        "session_id": session_id,
+                        "recipe_id": db_ids[r.id],
+                        "rank": start + i,
+                        "visible": visible,
+                    }
                     for i, r in enumerate(recipes)
                 ]
             ).execute()

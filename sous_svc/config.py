@@ -28,6 +28,9 @@ class Config:
 
     # feature flags
     WEB_SEARCH_FALLBACK_ENABLED = _flag("WEB_SEARCH_FALLBACK_ENABLED", True)
+    # web results fill in when the recipe api returns fewer than this
+    WEB_TOPUP_BELOW = int(os.getenv("WEB_TOPUP_BELOW", "15"))
+    WEB_SEARCH_MODEL = os.getenv("WEB_SEARCH_MODEL", "") or ANTHROPIC_MODEL
     NYT_MCP_ENABLED = _flag("NYT_MCP_ENABLED")
     # personal use only, full nyt recipes are paywalled content
     NYT_MCP_FULL_RECIPES = _flag("NYT_MCP_FULL_RECIPES")

@@ -41,6 +41,7 @@ class MemoryStore:
     ) -> None:
         with self._lock:
             stored = self._sessions[session.id]
+            # visible_ids already leaves new arrivals out of a narrowed view
             stored.pool.recipes.extend(recipes)
             stored.pool.offset, stored.pool.total = offset, total
             self._remember(recipes)
@@ -56,6 +57,13 @@ class MemoryStore:
         with self._lock:
             visible = list(recipe_ids) if recipe_ids is not None else None
             self._sessions[session.id].visible_ids = visible
+
+    def set_web_status(self, session_id: str, status: str) -> None:
+        with self._lock:
+            if stored := self._sessions.get(session_id):
+                stored.web_status = status
+                if status == "pending":
+                    stored.web_started = time.time()
 
     def get_cached_pool(self, key: str) -> Pool | None:
         with self._lock:

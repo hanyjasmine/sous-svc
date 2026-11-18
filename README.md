@@ -29,6 +29,20 @@ Port 5001 because macOS AirPlay holds 5000. The frontend reads `SOUS_SVC_URL` (d
 - Pools are cached for an hour by a hash of the parsed filters (`search_cache`), so a repeat search costs no points. An hour is Spoonacular's caching limit, and sessions expire on the same `SESSION_TTL_SECONDS`.
 - A 30-result search costs a few Spoonacular points (full recipe info is charged per result). The free plan has 50 points a day.
 
+### Web top-up
+
+When Spoonacular returns fewer than `WEB_TOPUP_BELOW` recipes (15), or fails outright (quota used up or down), a background job fills in the pool from the web:
+
+1. Claude runs a web search and submits up to 12 recipe page URLs.
+2. Sous fetches each page itself and reads its schema.org `Recipe` JSON-LD.
+3. Pages without a title, at least 2 ingredients and steps are skipped.
+
+The session reports `webPending: true` while the job runs, and the frontend polls `/results` until it's done. Fetches only go to public addresses, re-checked on every redirect, and stop at 3 MB. The finished pool, web results included, goes into the search cache.
+
+Each top-up costs a Claude call with web search (searches are billed per use, plus tokens) and takes about 20-30 s. Turn it off with `WEB_SEARCH_FALLBACK_ENABLED=false`. `WEB_SEARCH_MODEL` overrides the model used for it.
+
+Web recipes are stored with a link back to the original page and its author or site name. That's fine for personal use, but check each site's terms before Sous goes public.
+
 ### Chat
 
 Each turn, Claude gets the pool as a mid-conversation system message (only when it changed) and picks one of three tools:

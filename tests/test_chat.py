@@ -209,3 +209,33 @@ def test_other_users_session_is_forbidden(setup):
 def test_empty_message_is_rejected(setup):
     client, sid, _ = setup([])
     assert client.post(f"/sessions/{sid}/chat", json={"message": " "}).status_code == 400
+
+
+def test_thin_new_search_tops_up_from_the_web(setup):
+    from test_web import WEB, fake_web
+
+    from sous_svc.web import WebTopup
+
+    provider = FakeProvider([[recipe(1)], [recipe(10, "Brownies")]])
+    filters = SearchFilters.from_raw("brownies").model_dump()
+    client, sid, claude = setup([tool("new_search", filters), text("Found some.")], provider)
+    find_urls, fetch = fake_web(WEB)
+    app = client.application
+    app.extensions["sous.web"] = WebTopup(
+        app.extensions["sous.store"],
+        model="m",
+        enabled=True,
+        below=15,
+        find_urls=find_urls,
+        fetch=fetch,
+        submit=lambda fn, *args: fn(*args),
+    )
+    client.post(f"/sessions/{sid}/chat", json={"message": "fudgy brownies"}).get_data()
+    # the web search gets the user's words, not just the filters
+    assert find_urls.calls == ["fudgy brownies"]
+    session = client.get(f"/sessions/{sid}").get_json()
+    assert [r["title"] for r in session["recipes"]] == [
+        "Brownies",
+        "Web Carrots",
+        "Web Glazed Carrots",
+    ]
