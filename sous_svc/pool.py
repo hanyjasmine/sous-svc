@@ -42,6 +42,13 @@ def cache_pool(store: Store, result: PoolResult) -> None:
         store.put_cached_pool(result.cache_key, result.pool)
 
 
+# how many recipes scrolling can reach, known from the first page so counts stay put
+def reachable(pool: Pool) -> int:
+    if not pool.has_more:
+        return len(pool.recipes)
+    return max(len(pool.recipes), min(pool.total, MAX_POOL))
+
+
 def can_extend(session: SearchSession) -> bool:
     pool = session.pool
     return not session.narrowed and pool.has_more and len(pool.recipes) < MAX_POOL
@@ -76,8 +83,8 @@ def page(
     return {
         "recipes": [r.to_dict() for r in view[cursor:end]],
         "nextCursor": end if more else None,
-        "total": len(view),
-        "poolSize": len(session.pool.recipes),
+        "total": len(view) if session.narrowed else reachable(session.pool),
+        "poolSize": reachable(session.pool),
         "narrowed": session.narrowed,
     }
 

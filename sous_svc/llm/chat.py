@@ -8,7 +8,7 @@ from dataclasses import dataclass
 import anthropic
 from pydantic import ValidationError
 
-from ..pool import cache_pool, find_pool, page
+from ..pool import cache_pool, find_pool, page, reachable
 from ..recipes import ProviderError, QuotaExceeded, SearchFilters
 from ..store import SearchSession, Store
 from .client import get_client
@@ -160,7 +160,7 @@ def run_tool(ctx: ChatContext, name: str, args, tool_use_id: str) -> tuple[dict,
         ctx.store.set_visible(session, keep)
         session.visible_ids = keep
         titles = "; ".join(r.title for r in session.view())
-        note = f"Now showing {len(keep)} of {len(session.pool.recipes)}: {titles}"
+        note = f"Now showing {len(keep)} recipes: {titles}"
         if len(keep) < 3:
             note += ". That's a thin list, offer a new search if they want more options."
         return _result(tool_use_id, note), _update(ctx)
@@ -168,9 +168,8 @@ def run_tool(ctx: ChatContext, name: str, args, tool_use_id: str) -> tuple[dict,
     if name == "show_all_results":
         ctx.store.set_visible(session, None)
         session.visible_ids = None
-        return _result(tool_use_id, f"Showing all {len(session.pool.recipes)} recipes."), _update(
-            ctx
-        )
+        note = f"Showing all {reachable(session.pool)} recipes."
+        return _result(tool_use_id, note), _update(ctx)
 
     if name == "new_search":
         try:
@@ -215,12 +214,18 @@ def pool_message(session: SearchSession) -> str:
     body = "\n".join(lines) or "(empty)"
     filters = json.dumps(pool.filters.model_dump(exclude_defaults=True), sort_keys=True)
     digest = hashlib.sha256(f"{filters}\n{body}".encode()).hexdigest()[:12]
-    more = ", more available upstream" if pool.has_more else ""
+    loaded, total = len(pool.recipes), reachable(pool)
+    # the user's heading shows total, quote that number, not what's loaded
+    count = (
+        f"{total} ({loaded} loaded so far, the rest load as they scroll)"
+        if total > loaded
+        else str(total)
+    )
     showing = ", ".join(session.visible_ids) if session.visible_ids is not None else "all"
     return (
         f"[pool {digest}]\n"
         f"Filters: {filters}\n"
-        f"Recipes in pool: {len(pool.recipes)}{more}\n"
+        f"Matching recipes: {count}\n"
         f"Showing: {showing}\n\n{body}"
     )
 

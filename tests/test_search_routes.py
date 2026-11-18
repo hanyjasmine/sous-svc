@@ -93,7 +93,8 @@ def test_results_page_and_extend_from_provider(make_client):
     body = client.post("/search", json={"query": "soup"}).get_json()
     assert len(body["recipes"]) == 10
     assert body["nextCursor"] == 10
-    assert body["total"] == 30
+    # 100 upstream, capped at what scrolling can reach
+    assert body["total"] == 90
 
     res = client.get(f"/sessions/{body['id']}/results?cursor=20").get_json()
     assert [r["id"] for r in res["recipes"]][0] == "spoonacular-20"
@@ -102,7 +103,7 @@ def test_results_page_and_extend_from_provider(make_client):
     # past the pool pulls the next provider page
     res = client.get(f"/sessions/{body['id']}/results?cursor=30").get_json()
     assert res["recipes"][0]["id"] == "spoonacular-30"
-    assert res["total"] == 50
+    assert res["total"] == 90
     assert provider.calls[1][2] == 30
 
 
@@ -122,3 +123,15 @@ def test_same_filters_reuse_cached_pool(make_client):
     assert len(provider.calls) == 1
     assert a["id"] != b["id"]
     assert b["recipes"][0]["id"] == "spoonacular-1"
+
+
+def test_total_settles_on_loaded_count_when_provider_runs_out(make_client):
+    provider = FakeProvider([[recipe(i) for i in range(30)], [recipe(30), recipe(31)]], total=40)
+    client = make_client(provider)
+    body = client.post("/search", json={"query": "soup"}).get_json()
+    assert body["total"] == 40
+    res = client.get(f"/sessions/{body['id']}/results?cursor=30").get_json()
+    # spoonacular said 40 but only 32 came back, total follows what's real
+    assert len(res["recipes"]) == 2
+    assert res["total"] == 32
+    assert res["nextCursor"] is None
