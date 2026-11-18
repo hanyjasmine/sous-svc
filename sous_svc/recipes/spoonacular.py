@@ -5,7 +5,7 @@ from fractions import Fraction
 import httpx
 
 from .filters import SearchFilters
-from .models import Ingredient, Recipe
+from .models import Ingredient, Recipe, SearchPage
 
 BASE_URL = "https://api.spoonacular.com"
 
@@ -32,11 +32,12 @@ class SpoonacularClient:
         self._http = http or httpx.Client(base_url=BASE_URL, timeout=15)
         self._api_key = api_key
 
-    def search(self, filters: SearchFilters, number: int = 10) -> list[Recipe]:
+    def search(self, filters: SearchFilters, number: int = 10, offset: int = 0) -> SearchPage:
         if not self._api_key:
             raise ProviderError("SPOONACULAR_API_KEY is not set")
         params = to_params(filters) | {
             "number": number,
+            "offset": offset,
             "addRecipeInformation": "true",
             "fillIngredients": "true",
             "instructionsRequired": "true",
@@ -54,7 +55,9 @@ class SpoonacularClient:
         if res.status_code != 200:
             raise ProviderError(f"spoonacular returned {res.status_code}")
 
-        return [to_recipe(r) for r in res.json().get("results", [])]
+        data = res.json()
+        recipes = [to_recipe(r) for r in data.get("results", [])]
+        return SearchPage(recipes, data.get("totalResults", len(recipes)))
 
 
 def to_params(f: SearchFilters) -> dict:

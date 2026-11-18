@@ -23,6 +23,7 @@ def create_app(config: type[Config] | dict | None = None) -> Flask:
     app.extensions["sous.store"] = _make_store(app)
     app.extensions["sous.spoonacular"] = SpoonacularClient(app.config["SPOONACULAR_API_KEY"])
     app.extensions["sous.guest_limiter"] = RateLimiter(app.config["GUEST_SEARCHES_PER_HOUR"])
+    app.extensions["sous.guest_chat_limiter"] = RateLimiter(app.config["GUEST_CHAT_TURNS_PER_HOUR"])
 
     register_routes(app)
 

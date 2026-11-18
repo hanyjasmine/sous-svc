@@ -33,6 +33,7 @@ class Config:
     NYT_MCP_FULL_RECIPES = _flag("NYT_MCP_FULL_RECIPES")
 
     GUEST_SEARCHES_PER_HOUR = int(os.getenv("GUEST_SEARCHES_PER_HOUR", "10"))
+    GUEST_CHAT_TURNS_PER_HOUR = int(os.getenv("GUEST_CHAT_TURNS_PER_HOUR", "40"))
 
     # spoonacular terms allow caching results for up to an hour
     SESSION_TTL_SECONDS = int(os.getenv("SESSION_TTL_SECONDS", "3600"))

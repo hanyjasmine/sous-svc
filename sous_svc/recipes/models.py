@@ -45,3 +45,10 @@ class Recipe:
             "totalMinutes": self.total_minutes,
             "servings": self.servings,
         }
+
+
+@dataclass(frozen=True)
+class SearchPage:
+    recipes: list[Recipe]
+    # how many results the provider has for these filters in total
+    total: int

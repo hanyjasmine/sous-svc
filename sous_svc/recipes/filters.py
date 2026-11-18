@@ -1,3 +1,5 @@
+import hashlib
+import json
 from typing import Literal
 
 from pydantic import BaseModel, Field
@@ -59,3 +61,12 @@ class SearchFilters(BaseModel):
 
     def is_relaxable(self) -> bool:
         return bool(self.cuisines or self.include_ingredients or self.meal_type)
+
+    # same filters in any order or casing share one cached pool
+    def cache_key(self) -> str:
+        norm = {
+            k: sorted(str(x).lower() for x in v) if isinstance(v, list) else v
+            for k, v in self.model_dump().items()
+        }
+        norm["query"] = " ".join(self.query.lower().split())
+        return hashlib.sha256(json.dumps(norm, sort_keys=True).encode()).hexdigest()[:32]

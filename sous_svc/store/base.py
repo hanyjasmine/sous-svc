@@ -6,21 +6,42 @@ from ..recipes import Recipe, SearchFilters
 
 
 @dataclass
+class Pool:
+    filters: SearchFilters
+    recipes: list[Recipe]
+    # results already pulled from the provider, the next fetch starts here
+    offset: int = 0
+    # results the provider has for these filters
+    total: int = 0
+
+    @property
+    def has_more(self) -> bool:
+        return self.offset < self.total
+
+
+@dataclass
 class SearchSession:
     id: str
     query: str
-    filters: SearchFilters
-    recipes: list[Recipe]
+    pool: Pool
     user_id: str | None = None
     created_at: float = field(default_factory=time.time)
+    # none means the whole pool is showing
+    visible_ids: list[str] | None = None
 
-    def to_dict(self) -> dict:
-        return {
-            "id": self.id,
-            "query": self.query,
-            "filters": self.filters.model_dump(),
-            "recipes": [r.to_dict() for r in self.recipes],
-        }
+    @property
+    def filters(self) -> SearchFilters:
+        return self.pool.filters
+
+    @property
+    def narrowed(self) -> bool:
+        return self.visible_ids is not None
+
+    def view(self) -> list[Recipe]:
+        if self.visible_ids is None:
+            return self.pool.recipes
+        keep = set(self.visible_ids)
+        return [r for r in self.pool.recipes if r.id in keep]
 
 
 class RecipeNotFound(Exception):
@@ -28,11 +49,28 @@ class RecipeNotFound(Exception):
 
 
 class Store(Protocol):
-    def create_session(
-        self, query: str, filters: SearchFilters, recipes: list[Recipe], user_id: str | None
-    ) -> SearchSession: ...
+    def create_session(self, query: str, pool: Pool, user_id: str | None) -> SearchSession: ...
 
     def get_session(self, session_id: str) -> SearchSession | None: ...
+
+    # appends recipes fetched past the current offset
+    def extend_pool(
+        self, session: SearchSession, recipes: list[Recipe], offset: int, total: int
+    ) -> None: ...
+
+    # swaps in a new search's pool and clears any narrowing
+    def replace_pool(self, session: SearchSession, pool: Pool) -> None: ...
+
+    def set_visible(self, session: SearchSession, recipe_ids: list[str] | None) -> None: ...
+
+    def get_cached_pool(self, key: str) -> Pool | None: ...
+
+    def put_cached_pool(self, key: str, pool: Pool) -> None: ...
+
+    # raw claude messages, oldest first
+    def list_messages(self, session_id: str) -> list[dict]: ...
+
+    def append_messages(self, session_id: str, messages: list[dict]) -> None: ...
 
     def list_saved(self, user_id: str) -> list[Recipe]: ...
 

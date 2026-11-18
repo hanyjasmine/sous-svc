@@ -5,8 +5,9 @@ from flask import Blueprint, abort, current_app, jsonify, request
 from ..auth import current_user_id
 from ..limits import RateLimiter, client_ip
 from ..llm import parse_query
+from ..pool import PAGE_SIZE, cache_pool, find_pool, page, session_dict
 from ..recipes import ProviderError, QuotaExceeded
-from ..store import Store
+from ..store import SearchSession, Store
 
 log = logging.getLogger(__name__)
 
@@ -17,6 +18,10 @@ MAX_QUERY_LENGTH = 300
 
 def _store() -> Store:
     return current_app.extensions["sous.store"]
+
+
+def _provider():
+    return current_app.extensions["sous.spoonacular"]
 
 
 @bp.post("/search")
@@ -37,27 +42,36 @@ def create_search():
         ), 429
 
     filters = parse_query(query, current_app.config["ANTHROPIC_MODEL"])
-    provider = current_app.extensions["sous.spoonacular"]
-
     try:
-        recipes = provider.search(filters)
-        # soft filters can zero things out, retry once without them
-        if not recipes and filters.is_relaxable():
-            filters = filters.relaxed()
-            recipes = provider.search(filters)
+        result = find_pool(filters, _provider(), _store())
     except QuotaExceeded as e:
         return jsonify(error="quota_exceeded", message=str(e)), 429
     except ProviderError as e:
         log.error("recipe search failed: %s", e)
         return jsonify(error="provider_error", message="Recipe search is unavailable"), 502
 
-    session = _store().create_session(query, filters, recipes, user_id)
-    return jsonify(session.to_dict()), 201
+    session = _store().create_session(query, result.pool, user_id)
+    cache_pool(_store(), result)
+    return jsonify(session_dict(session, _provider(), _store())), 201
+
+
+def load_session(session_id: str) -> SearchSession:
+    session = _store().get_session(session_id)
+    if session is None:
+        abort(404, "search session not found or expired")
+    return session
 
 
 @bp.get("/sessions/<session_id>")
 def get_session(session_id: str):
-    session = _store().get_session(session_id)
-    if session is None:
-        abort(404, "search session not found or expired")
-    return jsonify(session.to_dict())
+    return jsonify(session_dict(load_session(session_id), _provider(), _store()))
+
+
+@bp.get("/sessions/<session_id>/results")
+def get_results(session_id: str):
+    session = load_session(session_id)
+    cursor = request.args.get("cursor", 0, type=int)
+    limit = request.args.get("limit", PAGE_SIZE, type=int)
+    if cursor < 0 or not 1 <= limit <= 30:
+        abort(400, "bad cursor or limit")
+    return jsonify(page(session, _provider(), _store(), cursor, limit))

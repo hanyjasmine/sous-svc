@@ -1,5 +1,5 @@
 from .filters import SearchFilters
-from .models import Ingredient, Recipe
+from .models import Ingredient, Recipe, SearchPage
 from .spoonacular import ProviderError, QuotaExceeded, SpoonacularClient
 
 __all__ = [
@@ -8,5 +8,6 @@ __all__ = [
     "QuotaExceeded",
     "Recipe",
     "SearchFilters",
+    "SearchPage",
     "SpoonacularClient",
 ]

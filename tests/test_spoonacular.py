@@ -99,10 +99,12 @@ def test_search_sends_key_header_and_parses_results():
     def handler(req: httpx.Request):
         assert req.headers["x-api-key"] == "key"
         assert req.url.params["addRecipeInformation"] == "true"
-        return httpx.Response(200, json={"results": [RAW]})
+        assert req.url.params["offset"] == "20"
+        return httpx.Response(200, json={"results": [RAW], "totalResults": 57})
 
-    recipes = _client(handler).search(SearchFilters.from_raw("chicken"))
-    assert [r.title for r in recipes] == ["Caribbean Chicken Thighs"]
+    page = _client(handler).search(SearchFilters.from_raw("chicken"), offset=20)
+    assert [r.title for r in page.recipes] == ["Caribbean Chicken Thighs"]
+    assert page.total == 57
 
 
 def test_search_raises_quota_exceeded_on_402():

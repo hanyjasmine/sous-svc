@@ -30,3 +30,29 @@ def fake_jwks(monkeypatch):
 @pytest.fixture
 def auth_header():
     return {"Authorization": f"Bearer {make_token()}"}
+
+
+def recipe(n: int, title: str | None = None, **kw):
+    from sous_svc.recipes import Recipe
+
+    return Recipe(
+        id=f"spoonacular-{n}", source="spoonacular", title=title or f"Dish {n}", summary="", **kw
+    )
+
+
+class FakeProvider:
+    # each queued item is a list of recipes, or an exception to raise
+    def __init__(self, pages=None, total=None, error=None):
+        self.pages = list(pages or [])
+        self.total = total
+        self.error = error
+        self.calls: list[tuple] = []
+
+    def search(self, filters, number=10, offset=0):
+        from sous_svc.recipes import SearchPage
+
+        self.calls.append((filters, number, offset))
+        if self.error:
+            raise self.error
+        recipes = self.pages.pop(0) if self.pages else []
+        return SearchPage(recipes, self.total if self.total is not None else len(recipes))

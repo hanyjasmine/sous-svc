@@ -1,24 +1,11 @@
 import pytest
-from conftest import SUPABASE_URL
+from conftest import SUPABASE_URL, FakeProvider, recipe
 
 from sous_svc import create_app
 from sous_svc.limits import RateLimiter
 from sous_svc.recipes import QuotaExceeded, Recipe, SearchFilters
 
 RECIPE = Recipe(id="spoonacular-1", source="spoonacular", title="Soup", summary="Warm.")
-
-
-class FakeProvider:
-    def __init__(self, results=None, error=None):
-        self.results = list(results or [])
-        self.error = error
-        self.calls: list[SearchFilters] = []
-
-    def search(self, filters):
-        self.calls.append(filters)
-        if self.error:
-            raise self.error
-        return self.results.pop(0) if self.results else []
 
 
 @pytest.fixture
@@ -54,8 +41,8 @@ def test_search_relaxes_soft_filters_when_empty(make_client):
     res = make_client(provider, strict).post("/search", json={"query": "thai vegan soup"})
     assert res.status_code == 201
     assert len(provider.calls) == 2
-    assert provider.calls[1].cuisines == []
-    assert provider.calls[1].diets == ["vegan"]
+    assert provider.calls[1][0].cuisines == []
+    assert provider.calls[1][0].diets == ["vegan"]
 
 
 def test_search_rejects_empty_query(make_client):
@@ -95,3 +82,43 @@ def test_signed_in_users_skip_guest_limit(make_client, auth_header):
     client.application.extensions["sous.guest_limiter"] = RateLimiter(limit=0)
     res = client.post("/search", json={"query": "a"}, headers=auth_header)
     assert res.status_code == 201
+
+
+def test_results_page_and_extend_from_provider(make_client):
+    first = [recipe(i) for i in range(30)]
+    more = [recipe(i) for i in range(30, 50)]
+    provider = FakeProvider([first, more], total=100)
+    client = make_client(provider)
+
+    body = client.post("/search", json={"query": "soup"}).get_json()
+    assert len(body["recipes"]) == 10
+    assert body["nextCursor"] == 10
+    assert body["total"] == 30
+
+    res = client.get(f"/sessions/{body['id']}/results?cursor=20").get_json()
+    assert [r["id"] for r in res["recipes"]][0] == "spoonacular-20"
+    assert len(provider.calls) == 1
+
+    # past the pool pulls the next provider page
+    res = client.get(f"/sessions/{body['id']}/results?cursor=30").get_json()
+    assert res["recipes"][0]["id"] == "spoonacular-30"
+    assert res["total"] == 50
+    assert provider.calls[1][2] == 30
+
+
+def test_last_page_has_no_cursor(make_client):
+    client = make_client(FakeProvider([[recipe(i) for i in range(12)]]))
+    body = client.post("/search", json={"query": "soup"}).get_json()
+    res = client.get(f"/sessions/{body['id']}/results?cursor=10").get_json()
+    assert len(res["recipes"]) == 2
+    assert res["nextCursor"] is None
+
+
+def test_same_filters_reuse_cached_pool(make_client):
+    provider = FakeProvider([[RECIPE]])
+    client = make_client(provider)
+    a = client.post("/search", json={"query": "warm soup"}).get_json()
+    b = client.post("/search", json={"query": "soup please"}).get_json()
+    assert len(provider.calls) == 1
+    assert a["id"] != b["id"]
+    assert b["recipes"][0]["id"] == "spoonacular-1"

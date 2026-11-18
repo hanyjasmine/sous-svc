@@ -3,6 +3,7 @@ from conftest import SUPABASE_URL, make_token
 
 from sous_svc import create_app
 from sous_svc.recipes import Recipe, SearchFilters
+from sous_svc.store import Pool
 
 SOUP = Recipe(id="spoonacular-1", source="spoonacular", title="Soup", summary="Warm.")
 STEW = Recipe(id="spoonacular-2", source="spoonacular", title="Stew", summary="Hearty.")
@@ -13,7 +14,7 @@ def client():
     app = create_app({"TESTING": True, "SUPABASE_URL": SUPABASE_URL})
     # recipes must exist (from a search) before they can be saved
     app.extensions["sous.store"].create_session(
-        "dinner", SearchFilters.from_raw("dinner"), [SOUP, STEW], None
+        "dinner", Pool(SearchFilters.from_raw("dinner"), [SOUP, STEW]), None
     )
     return app.test_client()
 
